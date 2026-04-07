@@ -31,7 +31,7 @@ func newSegment(dir string, baseOffset uint64, c Config) (*segment, error) {
 	if err != nil {
 		return nil, err
 	}
-	if s.store, err = newStore(storeFile, c.Logger); err != nil {
+	if s.store, err = newStore(storeFile); err != nil {
 		return nil, err
 	}
 	indexFile, err := os.OpenFile(

@@ -34,7 +34,6 @@ func TestLog(t *testing.T) {
 				}{
 					MaxStoreBytes: 32,
 				},
-				Logger: newTestLogger(),
 			}
 			log, err := NewLog(c)
 			require.NoError(t, err)

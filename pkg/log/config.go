@@ -10,5 +10,4 @@ type Config struct {
 		MaxIndexBytes uint64
 		InitialOffset uint64
 	}
-	Logger Logger
 }

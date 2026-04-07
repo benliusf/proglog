@@ -22,13 +22,12 @@ const (
 
 type store struct {
 	*os.File
-	mu     sync.Mutex
-	buf    *bufio.Writer
-	size   uint64
-	logger Logger
+	mu   sync.Mutex
+	buf  *bufio.Writer
+	size uint64
 }
 
-func newStore(f *os.File, logger Logger) (*store, error) {
+func newStore(f *os.File) (*store, error) {
 	if f == nil {
 		return nil, fmt.Errorf("nil file")
 	}
@@ -38,10 +37,9 @@ func newStore(f *os.File, logger Logger) (*store, error) {
 	}
 	size := uint64(fi.Size())
 	return &store{
-		File:   f,
-		size:   size,
-		buf:    bufio.NewWriter(f),
-		logger: logger,
+		File: f,
+		size: size,
+		buf:  bufio.NewWriter(f),
 	}, nil
 }
 
@@ -58,9 +56,6 @@ func (s *store) Append(p []byte) (n uint64, pos uint64, err error) {
 	}
 	w += lenOffset
 	s.size += uint64(w)
-	if s.logger != nil {
-		s.logger.Trace("Written %d bytes to file=%s; file size=%d", w, s.File.Name(), s.size)
-	}
 	return uint64(w), pos, nil
 }
 
@@ -75,12 +70,8 @@ func (s *store) Read(pos uint64) ([]byte, error) {
 		return nil, err
 	}
 	b := make([]byte, enc.Uint64(size))
-	n, err := s.File.ReadAt(b, int64(lenOffset+pos))
-	if err != nil {
+	if _, err := s.File.ReadAt(b, int64(lenOffset+pos)); err != nil {
 		return nil, err
-	}
-	if s.logger != nil {
-		s.logger.Trace("Read %d bytes at position %d from file=%s", n, pos, s.File.Name())
 	}
 	return b, nil
 }
