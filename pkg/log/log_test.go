@@ -1,121 +1,110 @@
 package log
 
 import (
-	"io/ioutil"
+	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
 func TestLog(t *testing.T) {
-	for scenario, fn := range map[string]func(t *testing.T, log *Log){
-		"append and read a record succeeds": testAppendRead,
-		"offset out of range error":         testOutOfRange,
-		"init with existing segments":       testInitExisting,
-		"reader":                            testReader,
-		"truncate":                          testTruncate,
-	} {
-		t.Run(scenario, func(t *testing.T) {
-			dir, err := ioutil.TempDir("", "log-test")
-			require.NoError(t, err)
-			defer os.RemoveAll(dir)
-			c := Config{
-				Log: struct {
-					Dir    string
-					Prefix string
-				}{
-					Dir: dir,
-				},
-				Segment: struct {
-					MaxStoreBytes uint64
-					MaxIndexBytes uint64
-					InitialOffset uint64
-				}{
-					MaxStoreBytes: 32,
-				},
-			}
-			log, err := NewLog(c)
-			require.NoError(t, err)
-			fn(t, log)
-		})
-	}
-}
-
-func testAppendRead(t *testing.T, log *Log) {
-	append := &Record{
-		Data: []byte("hello world"),
-	}
-	off, err := log.Append(append)
+	dir, err := os.MkdirTemp("", "log-test")
 	require.NoError(t, err)
-	require.Equal(t, uint64(0), off)
+	defer os.RemoveAll(dir)
 
-	read, err := log.Read(off)
+	errs := make(chan *LogError, 100)
+	log, err := NewLog(Config{
+		Log: struct {
+			Dir    string
+			Prefix string
+		}{
+			Dir:    dir,
+			Prefix: "test",
+		},
+		Buffer: struct {
+			Size    uint64
+			Timeout time.Duration
+		}{
+			Size: 1024 * 1024,
+		},
+		Errors: errs,
+	})
 	require.NoError(t, err)
-	require.Equal(t, append.Data, read.Data)
+	testAppend(t, log)
+	close(errs)
+	require.Equal(t, 0, len(errs))
 }
 
-func testOutOfRange(t *testing.T, log *Log) {
-	read, err := log.Read(1)
-	require.Nil(t, read)
-	require.Error(t, err)
-}
+func testAppend(t *testing.T, log *Log) {
+	t.Helper()
+	ctx := context.TODO()
 
-func testInitExisting(t *testing.T, log *Log) {
-	append := &Record{
-		Data: []byte("hello world"),
-	}
-	for i := 0; i < 3; i++ {
-		_, err := log.Append(append)
+	data := []byte(`Hold fast to dreams
+For if dreams die
+Life is a broken-winged bird
+That cannot fly.
+
+Hold fast to dreams
+For when dreams go
+Life is a barren field
+Frozen with snow.
+
+	- Langston Hughes`)
+
+	n := 3
+	for i := 0; i < n; i++ {
+		err := log.Append(ctx, data)
 		require.NoError(t, err)
 	}
 	require.NoError(t, log.Close())
 
-	off, err := log.LowestOffset()
+	f, _, err := openFile(log.activeSegment.store.File.Name())
 	require.NoError(t, err)
-	require.Equal(t, uint64(0), off)
-	off, err = log.HighestOffset()
-	require.NoError(t, err)
-	require.Equal(t, uint64(2), off)
-
-	n, err := NewLog(log.Config)
+	s, err := newStore(f)
 	require.NoError(t, err)
 
-	off, err = n.LowestOffset()
-	require.NoError(t, err)
-	require.Equal(t, uint64(0), off)
-	off, err = n.HighestOffset()
-	require.NoError(t, err)
-	require.Equal(t, uint64(2), off)
+	for i := 0; i < n; i++ {
+		pos := uint64(0) * uint64(lenOffset+len(data))
+		b, err := s.read(pos)
+		require.NoError(t, err)
+		require.Equal(t, data, b)
+	}
 }
 
-func testReader(t *testing.T, log *Log) {
-	append := &Record{
-		Data: []byte("hello world"),
+func TestTruncate(t *testing.T) {
+	dir, err := os.MkdirTemp("", "truncate-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	conf := Config{
+		Log: struct {
+			Dir    string
+			Prefix string
+		}{
+			Dir: dir,
+		},
 	}
-	off, err := log.Append(append)
-	require.NoError(t, err)
-	require.Equal(t, uint64(0), off)
 
-	reader := log.Reader()
-	b, err := ioutil.ReadAll(reader)
-	require.NoError(t, err)
-
-	require.NoError(t, err)
-	require.Equal(t, append.Data, b[lenOffset:])
-}
-
-func testTruncate(t *testing.T, log *Log) {
-	append := &Record{
-		Data: []byte("hello world"),
-	}
-	for i := 0; i < 3; i++ {
-		_, err := log.Append(append)
+	n := 3
+	for i := 0; i < n; i++ {
+		_, err := newSegment(uint64(i+1), conf)
 		require.NoError(t, err)
 	}
-	err := log.Truncate(1)
+	files, err := os.ReadDir(dir)
 	require.NoError(t, err)
+	require.Equal(t, n, len(files))
 
-	_, err = log.Read(0)
-	require.Error(t, err)
+	log, err := NewLog(conf)
+	require.NoError(t, err)
+	require.Equal(t, n, len(log.segments))
+
+	require.NoError(t, log.Truncate(uint64(n-1)))
+	require.Equal(t, 1, len(log.segments))
+	files, err = os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(files))
+
+	require.NoError(t, log.Close())
 }

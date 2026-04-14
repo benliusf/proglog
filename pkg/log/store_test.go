@@ -8,29 +8,29 @@ import (
 )
 
 var (
-	write = []byte("hello world")
-	width = uint64(len(write)) + lenOffset
+	storeTestData   = []byte("hello world")
+	storeTestLength = uint64(len(storeTestData)) + lenOffset
 )
 
-func TestStoreAppendRead(t *testing.T) {
-	f, err := os.CreateTemp("", "store_append_read_test")
+func TestStoreWriteRead(t *testing.T) {
+	f, err := os.CreateTemp("", "store_write_read_test")
 	require.NoError(t, err)
 	defer os.Remove(f.Name())
 
 	s, err := newStore(f)
 	require.NoError(t, err)
 
-	testAppend(t, s)
+	testWrite(t, s)
 	testRead(t, s)
 	testReadAt(t, s)
 }
 
-func testAppend(t *testing.T, s *store) {
+func testWrite(t *testing.T, s *store) {
 	t.Helper()
 	for i := uint64(1); i < 4; i++ {
-		n, pos, err := s.Append(write)
+		n, pos, err := s.write(storeTestData)
 		require.NoError(t, err)
-		require.Equal(t, pos+n, width*i)
+		require.Equal(t, pos+n, storeTestLength*i)
 	}
 }
 
@@ -38,10 +38,10 @@ func testRead(t *testing.T, s *store) {
 	t.Helper()
 	var pos uint64
 	for i := uint64(1); i < 4; i++ {
-		read, err := s.Read(pos)
+		read, err := s.read(pos)
 		require.NoError(t, err)
-		require.Equal(t, write, read)
-		pos += width
+		require.Equal(t, storeTestData, read)
+		pos += storeTestLength
 	}
 }
 
@@ -49,16 +49,16 @@ func testReadAt(t *testing.T, s *store) {
 	t.Helper()
 	for i, off := uint64(1), int64(0); i < 4; i++ {
 		b := make([]byte, lenOffset)
-		n, err := s.ReadAt(b, off)
+		n, err := s.readAt(b, off)
 		require.NoError(t, err)
 		require.Equal(t, lenOffset, n)
 		off += int64(n)
 
 		size := enc.Uint64(b)
 		b = make([]byte, size)
-		n, err = s.ReadAt(b, off)
+		n, err = s.readAt(b, off)
 		require.NoError(t, err)
-		require.Equal(t, write, b)
+		require.Equal(t, storeTestData, b)
 		require.Equal(t, int(size), n)
 		off += int64(n)
 	}
@@ -71,13 +71,13 @@ func TestStoreClose(t *testing.T) {
 
 	s, err := newStore(f)
 	require.NoError(t, err)
-	_, _, err = s.Append(write)
+	_, _, err = s.write(storeTestData)
 	require.NoError(t, err)
 
-	f, beforeSize, err := openFile(f.Name())
+	_, beforeSize, err := openFile(f.Name())
 	require.NoError(t, err)
 
-	err = s.Close()
+	err = s.close()
 	require.NoError(t, err)
 
 	_, afterSize, err := openFile(f.Name())

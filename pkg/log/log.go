@@ -1,8 +1,8 @@
 package log
 
 import (
+	"context"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"os"
 	"path"
@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Log struct {
@@ -19,17 +20,28 @@ type Log struct {
 
 	activeSegment *segment
 	segments      []*segment
+
+	buf  chan []byte
+	errs chan *LogError
+
+	w *worker
 }
 
 func NewLog(c Config) (*Log, error) {
-	if c.Segment.MaxStoreBytes == 0 {
-		c.Segment.MaxStoreBytes = 1024
-	}
-	if c.Segment.MaxIndexBytes == 0 {
-		c.Segment.MaxIndexBytes = 1024
+	if c.Log.Dir == "" {
+		return nil, fmt.Errorf("must specify directory!")
 	}
 	l := &Log{
 		Config: c,
+	}
+	if l.Config.Segment.MaxStoreBytes == 0 {
+		l.Config.Segment.MaxStoreBytes = 1024
+	}
+	if l.Config.Buffer.Size == 0 {
+		l.Config.Buffer.Size = 1_000
+	}
+	if l.Config.Buffer.Timeout <= 0 {
+		l.Config.Buffer.Timeout = 10 * time.Second
 	}
 	return l, l.setup()
 }
@@ -39,69 +51,83 @@ func (l *Log) setup() error {
 	if err != nil {
 		return err
 	}
-	var baseOffsets []uint64
+	pref := l.Config.Log.Prefix
+	var uids []uint64
 	for _, file := range files {
-		offStr := strings.TrimSuffix(file.Name(), path.Ext(file.Name()))
-		off, _ := strconv.ParseUint(offStr, 10, 0)
-		baseOffsets = append(baseOffsets, off)
+		tmp := file.Name()
+		if pref != "" {
+			if !strings.HasPrefix(tmp, pref) {
+				continue
+			}
+		}
+		if strings.HasSuffix(tmp, ext) {
+			tmp = strings.TrimSuffix(tmp, path.Ext(tmp))
+			if strings.Contains(tmp, ".") {
+				tmp = tmp[strings.LastIndex(tmp, "."):]
+			}
+			uid, err := strconv.ParseUint(tmp, 10, 0)
+			if err != nil {
+				return fmt.Errorf("unrecognized log file `%v`: %w", file.Name(), err)
+			}
+			uids = append(uids, uid)
+		}
 	}
-	sort.Slice(baseOffsets, func(i, j int) bool {
-		return baseOffsets[i] < baseOffsets[j]
+	sort.Slice(uids, func(i, j int) bool {
+		return uids[i] < uids[j]
 	})
-	for i := 0; i < len(baseOffsets); i++ {
-		if err = l.newSegment(baseOffsets[i]); err != nil {
+	for i := 0; i < len(uids); i++ {
+		if err = l.newSegment(uids[i]); err != nil {
 			return err
 		}
-		i++
 	}
 	if l.segments == nil {
-		if err = l.newSegment(l.Config.Segment.InitialOffset); err != nil {
+		if err = l.newSegment(1); err != nil {
 			return err
 		}
 	}
+	l.buf = make(chan []byte, l.Config.Buffer.Size)
+	l.errs = l.Config.Errors
+	l.w = &worker{
+		log:  l,
+		done: make(chan struct{}),
+	}
+	go l.w.run()
 	return nil
 }
 
-func (l *Log) Append(record *Record) (uint64, error) {
+func (l *Log) newSegment(uid uint64) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	off, err := l.activeSegment.Append(record)
+	s, err := newSegment(uid, l.Config)
 	if err != nil {
-		return 0, err
+		return err
 	}
-	if l.activeSegment.IsMaxed() {
-		err = l.newSegment(off + 1)
-	}
-	return off, err
+	l.segments = append(l.segments, s)
+	l.activeSegment = s
+	return nil
 }
 
-func (l *Log) Read(off uint64) (*Record, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	var s *segment
-	for _, segment := range l.segments {
-		if segment.baseOffset <= off && off < segment.nextOffset {
-			s = segment
-			break
-		}
+func (l *Log) Append(ctx context.Context, data []byte) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
-	if s == nil || s.nextOffset <= off {
-		return nil, fmt.Errorf("offset out of range: %d", off)
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("context is closed")
+	case <-time.After(l.Config.Buffer.Timeout):
+		return fmt.Errorf("timed out")
+	case l.buf <- data:
 	}
-	return s.Read(off)
+	return nil
 }
 
 func (l *Log) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	for _, segment := range l.segments {
-		if err := segment.Close(); err != nil {
-			return err
-		}
-	}
+	close(l.buf)
+	l.w.flush()
 	return nil
 }
 
@@ -119,30 +145,18 @@ func (l *Log) Reset() error {
 	return l.setup()
 }
 
-func (l *Log) LowestOffset() (uint64, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.segments[0].baseOffset, nil
-}
-
-func (l *Log) HighestOffset() (uint64, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	off := l.segments[len(l.segments)-1].nextOffset
-	if off == 0 {
-		return 0, nil
-	}
-	return off - 1, nil
-}
-
 func (l *Log) Truncate(lowest uint64) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	if lowest >= l.activeSegment.uid {
+		return fmt.Errorf("cannot remove active segment")
+	}
+
 	var segments []*segment
 	for _, s := range l.segments {
-		if s.nextOffset <= lowest+1 {
-			if err := s.Remove(); err != nil {
+		if s.uid <= lowest {
+			if err := s.remove(); err != nil {
 				return err
 			}
 			continue
@@ -150,26 +164,5 @@ func (l *Log) Truncate(lowest uint64) error {
 		segments = append(segments, s)
 	}
 	l.segments = segments
-	return nil
-}
-
-func (l *Log) Reader() io.Reader {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	readers := make([]io.Reader, len(l.segments))
-	for i, segment := range l.segments {
-		readers[i] = segment.Reader()
-	}
-	return io.MultiReader(readers...)
-}
-
-func (l *Log) newSegment(off uint64) error {
-	s, err := newSegment(l.Config.Log.Dir, off, l.Config)
-	if err != nil {
-		return err
-	}
-	l.segments = append(l.segments, s)
-	l.activeSegment = s
 	return nil
 }

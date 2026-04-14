@@ -1,14 +1,10 @@
 package log
 
-// The file store for a segment; we continually append records or read a record
-// from the offset.
-
 import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
 	"os"
-	"sync"
 )
 
 var (
@@ -22,7 +18,7 @@ const (
 
 type store struct {
 	*os.File
-	mu   sync.Mutex
+
 	buf  *bufio.Writer
 	size uint64
 }
@@ -43,9 +39,7 @@ func newStore(f *os.File) (*store, error) {
 	}, nil
 }
 
-func (s *store) Append(p []byte) (n uint64, pos uint64, err error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *store) write(p []byte) (n uint64, pos uint64, err error) {
 	pos = s.size
 	if err := binary.Write(s.buf, enc, uint64(len(p))); err != nil {
 		return 0, 0, err
@@ -59,9 +53,7 @@ func (s *store) Append(p []byte) (n uint64, pos uint64, err error) {
 	return uint64(w), pos, nil
 }
 
-func (s *store) Read(pos uint64) ([]byte, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *store) read(pos uint64) ([]byte, error) {
 	if err := s.buf.Flush(); err != nil {
 		return nil, err
 	}
@@ -76,18 +68,14 @@ func (s *store) Read(pos uint64) ([]byte, error) {
 	return b, nil
 }
 
-func (s *store) ReadAt(p []byte, off int64) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *store) readAt(b []byte, off int64) (int, error) {
 	if err := s.buf.Flush(); err != nil {
 		return 0, err
 	}
-	return s.File.ReadAt(p, off)
+	return s.File.ReadAt(b, off)
 }
 
-func (s *store) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *store) close() error {
 	err := s.buf.Flush()
 	if err != nil {
 		return err
