@@ -17,7 +17,7 @@ func TestStoreWriteRead(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(f.Name())
 
-	s, err := newStore(f)
+	s, err := newStore(f, 0)
 	require.NoError(t, err)
 
 	testWrite(t, s)
@@ -69,7 +69,7 @@ func TestStoreClose(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(f.Name())
 
-	s, err := newStore(f)
+	s, err := newStore(f, 0)
 	require.NoError(t, err)
 	_, _, err = s.write(storeTestData)
 	require.NoError(t, err)

@@ -11,10 +11,10 @@ const (
 )
 
 type segment struct {
-	uid uint64
-
+	uid      uint64
 	maxBytes uint64
-	store    *store
+
+	store *store
 }
 
 func newSegment(uid uint64, conf Config) (*segment, error) {
@@ -22,7 +22,6 @@ func newSegment(uid uint64, conf Config) (*segment, error) {
 		uid:      uid,
 		maxBytes: conf.Segment.MaxStoreBytes,
 	}
-	var err error
 	pref := conf.Log.Prefix
 	if pref != "" {
 		pref += "."
@@ -35,7 +34,7 @@ func newSegment(uid uint64, conf Config) (*segment, error) {
 	if err != nil {
 		return nil, err
 	}
-	if s.store, err = newStore(storeFile); err != nil {
+	if s.store, err = newStore(storeFile, conf.Segment.BufferBytes); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -52,19 +51,17 @@ func (s *segment) append(data []byte) error {
 	return nil
 }
 
+func (s *segment) flush() error {
+	return s.store.flush()
+}
+
 func (s *segment) close() error {
-	if err := s.store.close(); err != nil {
-		return err
-	}
-	return nil
+	return s.store.close()
 }
 
 func (s *segment) remove() error {
 	if err := s.close(); err != nil {
 		return err
 	}
-	if err := os.Remove(s.store.Name()); err != nil {
-		return err
-	}
-	return nil
+	return os.Remove(s.store.Name())
 }

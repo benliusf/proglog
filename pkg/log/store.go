@@ -23,7 +23,7 @@ type store struct {
 	size uint64
 }
 
-func newStore(f *os.File) (*store, error) {
+func newStore(f *os.File, bufSize uint64) (*store, error) {
 	if f == nil {
 		return nil, fmt.Errorf("nil file")
 	}
@@ -34,8 +34,8 @@ func newStore(f *os.File) (*store, error) {
 	size := uint64(fi.Size())
 	return &store{
 		File: f,
+		buf:  bufio.NewWriterSize(f, int(bufSize)),
 		size: size,
-		buf:  bufio.NewWriter(f),
 	}, nil
 }
 
@@ -53,8 +53,12 @@ func (s *store) write(p []byte) (n uint64, pos uint64, err error) {
 	return uint64(w), pos, nil
 }
 
+func (s *store) flush() error {
+	return s.buf.Flush()
+}
+
 func (s *store) read(pos uint64) ([]byte, error) {
-	if err := s.buf.Flush(); err != nil {
+	if err := s.flush(); err != nil {
 		return nil, err
 	}
 	size := make([]byte, lenOffset)
@@ -69,15 +73,14 @@ func (s *store) read(pos uint64) ([]byte, error) {
 }
 
 func (s *store) readAt(b []byte, off int64) (int, error) {
-	if err := s.buf.Flush(); err != nil {
-		return 0, err
+	if err := s.flush(); err != nil {
+		return -1, err
 	}
 	return s.File.ReadAt(b, off)
 }
 
 func (s *store) close() error {
-	err := s.buf.Flush()
-	if err != nil {
+	if err := s.flush(); err != nil {
 		return err
 	}
 	return s.File.Close()

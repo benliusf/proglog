@@ -3,13 +3,14 @@ package log
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
+	"io/fs"
 	"os"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,6 +26,8 @@ type Log struct {
 	errs chan *LogError
 
 	w *worker
+
+	closed atomic.Bool
 }
 
 func NewLog(c Config) (*Log, error) {
@@ -47,27 +50,35 @@ func NewLog(c Config) (*Log, error) {
 }
 
 func (l *Log) setup() error {
-	files, err := ioutil.ReadDir(l.Config.Log.Dir)
+	files, err := os.ReadDir(l.Config.Log.Dir)
 	if err != nil {
 		return err
 	}
-	pref := l.Config.Log.Prefix
-	var uids []uint64
-	for _, file := range files {
-		tmp := file.Name()
-		if pref != "" {
-			if !strings.HasPrefix(tmp, pref) {
-				continue
-			}
+	match := func(f fs.DirEntry) bool {
+		if f.IsDir() {
+			return false
 		}
-		if strings.HasSuffix(tmp, ext) {
-			tmp = strings.TrimSuffix(tmp, path.Ext(tmp))
-			if strings.Contains(tmp, ".") {
-				tmp = tmp[strings.LastIndex(tmp, "."):]
-			}
-			uid, err := strconv.ParseUint(tmp, 10, 0)
+		return (l.Config.Log.Prefix == "" || strings.HasPrefix(f.Name(), l.Config.Log.Prefix)) &&
+			strings.HasSuffix(f.Name(), ext)
+	}
+	parse := func(f fs.DirEntry) (uint64, error) {
+		tmp := f.Name()
+		tmp = strings.TrimSuffix(tmp, path.Ext(tmp))
+		if strings.Contains(tmp, ".") {
+			tmp = tmp[strings.LastIndex(tmp, "."):]
+		}
+		uid, err := strconv.ParseUint(tmp, 10, 0)
+		if err != nil {
+			return 0, fmt.Errorf("unrecognized log file `%v`: %w", f.Name(), err)
+		}
+		return uid, nil
+	}
+	var uids []uint64
+	for _, f := range files {
+		if match(f) {
+			uid, err := parse(f)
 			if err != nil {
-				return fmt.Errorf("unrecognized log file `%v`: %w", file.Name(), err)
+				return err
 			}
 			uids = append(uids, uid)
 		}
@@ -126,8 +137,12 @@ func (l *Log) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	if l.closed.Load() {
+		return nil
+	}
 	close(l.buf)
 	l.w.flush()
+	l.closed.Store(true)
 	return nil
 }
 
@@ -135,7 +150,14 @@ func (l *Log) Remove() error {
 	if err := l.Close(); err != nil {
 		return err
 	}
-	return os.RemoveAll(l.Config.Log.Dir)
+	for _, s := range l.segments {
+		if err := s.remove(); err != nil {
+			return err
+		}
+	}
+	l.activeSegment = nil
+	l.segments = []*segment{}
+	return nil
 }
 
 func (l *Log) Reset() error {

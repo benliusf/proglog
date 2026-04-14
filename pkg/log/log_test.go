@@ -3,6 +3,7 @@ package log
 import (
 	"context"
 	"os"
+	"path"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ func TestLog(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(dir)
 
-	errs := make(chan *LogError, 100)
+	errs := make(chan *LogError, 10)
 	log, err := NewLog(Config{
 		Log: struct {
 			Dir    string
@@ -27,14 +28,17 @@ func TestLog(t *testing.T) {
 			Size    uint64
 			Timeout time.Duration
 		}{
-			Size: 1024 * 1024,
+			Size: 10,
 		},
 		Errors: errs,
 	})
 	require.NoError(t, err)
+
 	testAppend(t, log)
 	close(errs)
 	require.Equal(t, 0, len(errs))
+
+	testRemove(t, log)
 }
 
 func testAppend(t *testing.T, log *Log) {
@@ -62,7 +66,7 @@ Frozen with snow.
 
 	f, _, err := openFile(log.activeSegment.store.File.Name())
 	require.NoError(t, err)
-	s, err := newStore(f)
+	s, err := newStore(f, 0)
 	require.NoError(t, err)
 
 	for i := 0; i < n; i++ {
@@ -71,6 +75,24 @@ Frozen with snow.
 		require.NoError(t, err)
 		require.Equal(t, data, b)
 	}
+}
+
+func testRemove(t *testing.T, log *Log) {
+	t.Helper()
+
+	n := len(log.segments)
+	_, err := os.Create(path.Join(log.Config.Log.Dir, "donotdelete.me"))
+	require.NoError(t, err)
+
+	files, err := os.ReadDir(log.Config.Log.Dir)
+	require.NoError(t, err)
+	require.Equal(t, n+1, len(files))
+
+	require.NoError(t, log.Remove())
+
+	files, err = os.ReadDir(log.Config.Log.Dir)
+	require.NoError(t, err)
+	require.Equal(t, n, len(files))
 }
 
 func TestTruncate(t *testing.T) {

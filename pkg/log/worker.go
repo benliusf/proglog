@@ -24,7 +24,7 @@ func (w *worker) run() {
 func (w *worker) flush() {
 	<-w.done
 	for _, segment := range w.log.segments {
-		if err := segment.close(); err != nil {
+		if err := segment.flush(); err != nil {
 			w.error(nil, err)
 		}
 	}
