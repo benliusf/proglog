@@ -1,0 +1,50 @@
+package log
+
+import (
+	"context"
+	"os"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestIter(t *testing.T) {
+	data := []byte(`If you can't fly then run,
+if you can't run then walk,
+if you can't walk then crawl,
+but whatever you do you have to keep moving forward.
+`)
+	dir, err := os.MkdirTemp("", "iter-test")
+	require.NoError(t, err)
+
+	log, err := NewLog(Config{
+		Log: struct {
+			Dir    string
+			Prefix string
+		}{
+			Dir: dir,
+		},
+	})
+	defer log.Remove()
+
+	iter, err := log.Iter()
+	require.NoError(t, err)
+	require.False(t, iter.HasNext())
+
+	n := 10
+	for i := 0; i < n; i++ {
+		log.Append(context.TODO(), data)
+	}
+	log.Close()
+
+	iter, err = log.Iter()
+	require.NoError(t, err)
+
+	for i := 0; i < n; i++ {
+		require.True(t, iter.HasNext())
+		b, err := iter.Next()
+		require.NoError(t, err)
+		require.Equal(t, data, b)
+	}
+	require.False(t, iter.HasNext())
+}

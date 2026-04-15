@@ -107,9 +107,6 @@ func (l *Log) setup() error {
 }
 
 func (l *Log) newSegment(uid uint64) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
 	s, err := newSegment(uid, l.Config)
 	if err != nil {
 		return err
@@ -131,6 +128,10 @@ func (l *Log) Append(ctx context.Context, data []byte) error {
 	case l.buf <- data:
 	}
 	return nil
+}
+
+func (l *Log) Iter() (*Iter, error) {
+	return newIter(l)
 }
 
 func (l *Log) Close() error {
@@ -174,7 +175,6 @@ func (l *Log) Truncate(lowest uint64) error {
 	if lowest >= l.activeSegment.uid {
 		return fmt.Errorf("cannot remove active segment")
 	}
-
 	var segments []*segment
 	for _, s := range l.segments {
 		if s.uid <= lowest {
