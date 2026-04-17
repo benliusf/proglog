@@ -8,7 +8,7 @@ import (
 type Iter struct {
 	log *Log
 
-	index int
+	idx int
 
 	curr *store
 	pos  uint64
@@ -22,10 +22,10 @@ func newIter(l *Log) (*Iter, error) {
 }
 
 func (i *Iter) open() error {
-	if i.index >= len(i.log.segments) {
+	if i.idx >= len(i.log.segments) {
 		return io.EOF
 	}
-	s := i.log.segments[i.index]
+	s := i.log.segments[i.idx]
 	f, err := os.OpenFile(s.store.Name(), os.O_RDWR, 0444)
 	if err != nil {
 		return err
@@ -44,7 +44,7 @@ func (i *Iter) rotate() error {
 			return err
 		}
 	}
-	i.index++
+	i.idx++
 	if err := i.open(); err != nil {
 		return err
 	}
@@ -54,7 +54,7 @@ func (i *Iter) rotate() error {
 func (i *Iter) HasNext() bool {
 	if i.curr != nil {
 		return (i.pos < i.curr.size) ||
-			(i.index+1 < len(i.log.segments))
+			(i.idx+1 < len(i.log.segments))
 	}
 	return false
 }
