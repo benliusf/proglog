@@ -165,6 +165,7 @@ func (l *Log) Reset() error {
 	if err := l.Remove(); err != nil {
 		return err
 	}
+	l.closed.Swap(false)
 	return l.setup()
 }
 

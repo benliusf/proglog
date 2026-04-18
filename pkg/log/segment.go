@@ -11,10 +11,11 @@ const (
 )
 
 type segment struct {
-	uid      uint64
-	maxBytes uint64
+	uid uint64
 
 	store *store
+
+	maxBytes uint64
 }
 
 func newSegment(uid uint64, conf Config) (*segment, error) {
@@ -26,7 +27,7 @@ func newSegment(uid uint64, conf Config) (*segment, error) {
 	if pref != "" {
 		pref += "."
 	}
-	storeFile, err := os.OpenFile(
+	f, err := os.OpenFile(
 		path.Join(conf.Log.Dir, fmt.Sprintf("%s%d%s", pref, uid, ext)),
 		os.O_RDWR|os.O_CREATE|os.O_APPEND,
 		0644,
@@ -34,7 +35,8 @@ func newSegment(uid uint64, conf Config) (*segment, error) {
 	if err != nil {
 		return nil, err
 	}
-	if s.store, err = newStore(storeFile, conf.Segment.BufferBytes); err != nil {
+	if s.store, err = newStore(f, conf.Segment.BufferBytes); err != nil {
+		f.Close()
 		return nil, err
 	}
 	return s, nil

@@ -53,6 +53,11 @@ but whatever you do you have to keep moving forward.
 }
 
 func BenchmarkIter(b *testing.B) {
+	const (
+		_1_gb   uint64 = 1024 * 1024 * 1000
+		_100_mb uint64 = 1024 * 1024 * 100
+	)
+
 	dir, err := os.MkdirTemp("", "benchmark-iter")
 	require.NoError(b, err)
 
@@ -69,7 +74,7 @@ func BenchmarkIter(b *testing.B) {
 			MaxStoreBytes uint64
 			BufferBytes   uint64
 		}{
-			MaxStoreBytes: 1024 * 1024 * 1000,
+			MaxStoreBytes: _1_gb,
 		},
 	})
 	defer log.Remove()
@@ -78,7 +83,7 @@ func BenchmarkIter(b *testing.B) {
 		data := make([]byte, math.IntN(4096-32)+32)
 		_, err := rand.Read(data)
 		require.NoError(b, err)
-		if (log.activeSegment.store.size + uint64(len(data)) + lenOffset) > (1024 * 1024 * 100) {
+		if (log.activeSegment.store.size + uint64(len(data)) + lenOffset) > _100_mb {
 			break
 		}
 		require.NoError(b, log.Append(ctx, data))
@@ -88,7 +93,7 @@ func BenchmarkIter(b *testing.B) {
 	require.Equal(b, 1, len(log.segments))
 
 	file := log.activeSegment.store
-	b.Run(fmt.Sprintf("File( file=%s, size=%d)", file.Name(), file.size),
+	b.Run(fmt.Sprintf("File( file=%s, size=%d )", file.Name(), file.size),
 		func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {

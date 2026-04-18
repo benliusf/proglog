@@ -83,8 +83,9 @@ func BenchmarkLog(b *testing.B) {
 		copy.Segment.BufferBytes = tt.segmentBufferBytes
 		copy.Buffer.Size = tt.bufferSize
 		b.Run(fmt.Sprintf("Config( MaxStoreBytes=%v, BufferBytes=%v, BufferSize=%v )",
-			copy.Segment.MaxStoreBytes, copy.Segment.BufferBytes, copy.Buffer.Size), func(b *testing.B) {
-			benchmarkAppend(b, copy)
-		})
+			copy.Segment.MaxStoreBytes, copy.Segment.BufferBytes, copy.Buffer.Size),
+			func(b *testing.B) {
+				benchmarkAppend(b, copy)
+			})
 	}
 }
