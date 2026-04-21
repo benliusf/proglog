@@ -3,6 +3,7 @@ package log
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -50,7 +51,7 @@ func NewLog(c Config) (*Log, error) {
 }
 
 func (l *Log) setup() error {
-	files, err := os.ReadDir(l.Config.Log.Dir)
+	dir, err := os.Open(l.Config.Log.Dir)
 	if err != nil {
 		return err
 	}
@@ -65,7 +66,7 @@ func (l *Log) setup() error {
 		tmp := f.Name()
 		tmp = strings.TrimSuffix(tmp, path.Ext(tmp))
 		if strings.Contains(tmp, ".") {
-			tmp = tmp[strings.LastIndex(tmp, "."):]
+			tmp = tmp[strings.LastIndex(tmp, ".")+1:]
 		}
 		uid, err := strconv.ParseUint(tmp, 10, 0)
 		if err != nil {
@@ -74,13 +75,22 @@ func (l *Log) setup() error {
 		return uid, nil
 	}
 	var uids []uint64
-	for _, f := range files {
-		if match(f) {
-			uid, err := parse(f)
-			if err != nil {
-				return err
+	for {
+		files, err := dir.ReadDir(100)
+		if err != nil {
+			if err == io.EOF {
+				break
 			}
-			uids = append(uids, uid)
+			return err
+		}
+		for _, f := range files {
+			if match(f) {
+				uid, err := parse(f)
+				if err != nil {
+					return err
+				}
+				uids = append(uids, uid)
+			}
 		}
 	}
 	sort.Slice(uids, func(i, j int) bool {

@@ -2,6 +2,7 @@ package log
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path"
 	"testing"
@@ -9,6 +10,36 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestSetup(t *testing.T) {
+	dir, err := os.MkdirTemp("", "setup-test")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	n := 1500
+	for i := 0; i < n; i++ {
+		_, err = os.Create(path.Join(dir, fmt.Sprintf("setup-test.%d.store", i)))
+		require.NoError(t, err)
+		if i < 100 {
+			_, err = os.Create(path.Join(dir, fmt.Sprintf("ignore-me.%d.store", i)))
+			require.NoError(t, err)
+		}
+	}
+
+	log, err := NewLog(Config{
+		Log: struct {
+			Dir    string
+			Prefix string
+		}{
+			Dir:    dir,
+			Prefix: "setup-test",
+		},
+	})
+	require.NoError(t, err)
+
+	log.Close()
+	require.Equal(t, n, len(log.segments))
+}
 
 func TestLog(t *testing.T) {
 	dir, err := os.MkdirTemp("", "log-test")
