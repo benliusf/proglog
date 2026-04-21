@@ -1,4 +1,4 @@
-module proglog
+module github.com/benliusf/proglog
 
 go 1.23.4
 
